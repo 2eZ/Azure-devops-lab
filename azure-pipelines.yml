@@ -1,19 +1,63 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
-
 trigger:
-- main
+  - main
+
+pr:
+  - main
+
+variables:
+  azureServiceConnection: 'MyAzureServiceConnection'   # <-- name of service connection you'll create
+  location: 'eastus'                                  # change if you prefer
+  rgName: 'rg-simple-pipeline-$(Build.BuildId)'
+  storagePrefix: 'simppip'                            # prefix for storage account (lowercase, 3-24 chars)
+  storageName: '$(storagePrefix)$(Build.BuildId)'     # final name must be globally unique and lowercase
 
 pool:
-  vmImage: ubuntu-latest
+  vmImage: 'ubuntu-latest'
 
-steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+stages:
+  - stage: Deploy
+    displayName: Deploy stage (create resource)
+    jobs:
+      - job: CreateResource
+        displayName: Create RG + Storage Account
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Create resource group'
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "Creating resource group: $(rgName) in $(location)"
+                az group create --name "$(rgName)" --location "$(location)"
+                az group show --name "$(rgName)"
 
-- script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+          - task: AzureCLI@2
+            displayName: 'Create storage account'
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                # storage account name must be 3-24 lowercase letters/numbers
+                STORAGE_NAME=$(echo "$(storageName)" | tr '[:upper:]' '[:lower:]' | cut -c1-24)
+                echo "Using storage account name: $STORAGE_NAME"
+                az storage account create --name $STORAGE_NAME --resource-group "$(rgName)" --location "$(location)" --sku Standard_LRS --kind StorageV2
+                az storage account show --name $STORAGE_NAME --resource-group "$(rgName)"
+
+  # Optional teardown stage (commented out). Enable if you want pipeline to delete resources.
+  # - stage: Teardown
+  #   displayName: Teardown stage (delete resources)
+  #   dependsOn: Deploy
+  #   condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))  # runs only when pipeline started manually
+  #   jobs:
+  #     - job: DeleteResource
+  #       steps:
+  #         - task: AzureCLI@2
+  #           inputs:
+  #             azureSubscription: $(azureServiceConnection)
+  #             scriptType: bash
+  #             scriptLocation: inlineScript
+  #             inlineScript: |
+  #               echo "Deleting resource group: $(rgName)"
+  #               az group delete --name "$(rgName)" --yes --no-wait
